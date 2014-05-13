@@ -79,6 +79,8 @@ class CABOWeatherDataProvider(WeatherDataProvider):
     #  start and end year
     firstyear = None
     lastyear = None
+    # first date
+    first_date = None
     # temporary array for storing data
     potential_records = None
     tmp_data = None

@@ -691,6 +691,18 @@ class SimulationObject(HasTraits, DispatcherObject):
         self.subSimObjects = self._find_SubSimObjects()
         self.logger.info("Component successfully initialized on %s!" % day)
 
+    def initialize(self, *args, **kwargs):
+        msg = "`initialize` method not yet implemented on %s" % self.__class__.__name__
+        raise NotImplementedError(msg)
+
+    def integrate(self, *args, **kwargs):
+        msg = "`integrate` method not yet implemented on %s" % self.__class__.__name__
+        raise NotImplementedError(msg)
+
+    def calc_rates(self, *args, **kwargs):
+        msg = "`calc_rates` method not yet implemented on %s" % self.__class__.__name__
+        raise NotImplementedError(msg)
+
     def __setattr__(self, attr, value):
         # __setattr__ has been modified  to enforce that class attributes
         # must be defined before they can be assigned. There are a few
@@ -727,48 +739,32 @@ class SimulationObject(HasTraits, DispatcherObject):
         
         :param varname: Name of the variable.
         
-        Note that the `get_variable()` will first search for `varname` exactly
-        as specified (case sensitive). If the variable cannot be found, it will
-        look for the uppercase name of that variable. This is purely for
-        convenience.
+        Note that the `get_variable()` will searches for `varname` exactly
+        as specified (case sensitive).
         """
-        
-        #if self.subSimObjects is None:
-        #    self.subSimObjects = self._find_SubSimObjects()
-
-        # Check if variable is registered in the kiosk, also check for
-        # name in upper case as most variables are defined in upper case.
-        # If variable is not registered in the kiosk then return None directly.
-        if self.kiosk.variable_exists(varname):
-            v = varname
-        elif self.kiosk.variable_exists(varname.upper()):
-            v = varname.upper()
-        else:
-            return None
-        
-        if v in self.kiosk:
-            return self.kiosk[v]
 
         # Search for variable in the current object, then traverse the hierarchy
         value = None
-        if hasattr(self.states, v):
-            value = getattr(self.states, v)
-        elif hasattr(self.rates, v):
-            value = getattr(self.rates, v)
+        if hasattr(self.states, varname):
+            value = getattr(self.states, varname)
+        elif hasattr(self.rates, varname):
+            value = getattr(self.rates, varname)
         # Query individual sub-SimObject for existence of variable v
         else:
             for simobj in self.subSimObjects:
-                value = simobj.get_variable(v)
+                value = simobj.get_variable(varname)
                 if value is not None:
                     break
         return value
 
     #---------------------------------------------------------------------------
-    def set_variable(self, varname, value):
+    def set_variable(self, varname, value, incr):
         """ Sets the value of the specified state or rate variable.
 
         :param varname: Name of the variable to be updated (string).
         :param value: Value that it should be updated to (float)
+        :param incr: dict that will receive the increments to the updated state
+            variables.
 
         :returns: either the increment of the variable (new - old) or `None`
           if the call was unsuccessful in finding the class method (see below).
@@ -793,25 +789,20 @@ class SimulationObject(HasTraits, DispatcherObject):
         try:
             method_obj = getattr(self, method_name)
             rv = method_obj(value)
-            if rv is None:
-                msg = ("Method %s on '%s' should return the increment of the update;" +
-                       " got None instead!") % (method_name, self.__class__.__name__)
+            if not isinstance(rv, dict):
+                msg = ("Method %s on '%s' should return a dict with the increment of the " +
+                       "updated state variables!") % (method_name, self.__class__.__name__)
                 raise exc.PCSEError(msg)
-            return rv
-        except AttributeError: # method is not present: just continue
+            incr.update(rv)
+        except AttributeError:  # method is not present: just continue
             pass
-        except TypeError: # method is present but is not callable: error!
+        except TypeError:  # method is present but is not callable: error!
             msg = ("Method '%s' on '%s' could not be called by 'set_variable()': " +
                    "check your code!") % (method_name, self.__class__.__name__)
             raise exc.PCSEError(msg)
 
-        rv = None
         for simobj in self.subSimObjects:
-            rv = simobj.set_variable(varname, value)
-            if rv is not None:
-                break
-
-        return rv
+            simobj.set_variable(varname, value, incr)
 
     #---------------------------------------------------------------------------
     def _delete(self):

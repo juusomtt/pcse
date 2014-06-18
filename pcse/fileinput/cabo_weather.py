@@ -6,11 +6,10 @@ import glob
 import calendar
 import numpy as np
 import datetime as dt
-import copy
 import warnings
 
 from ..base_classes import WeatherDataContainer, WeatherDataProvider
-from ..util import penman, angstrom, check_angstromAB
+from ..util import reference_ET, angstrom, check_angstromAB
 from ..exceptions import PCSEError
 
 class CABOWeatherDataProvider(WeatherDataProvider):
@@ -18,6 +17,10 @@ class CABOWeatherDataProvider(WeatherDataProvider):
     
     :param fname: root name of CABO weather files to read
     :param fpath: path where to find files, can be absolute or relative.
+    :keyword ETmodel: "PM"|"P" for selecting penman-monteith or Penman
+        method for reference evapotranspiration. Defaults to "PM".
+    :keyword distance: maximum interpolation distance for meteorological
+        variables, defaults to 1 day.
     :returns: callable like object with meteo records keyed on date.
     
     The Wageningen crop models that are written in FORTRAN or FST often use
@@ -85,8 +88,10 @@ class CABOWeatherDataProvider(WeatherDataProvider):
     potential_records = None
     tmp_data = None
     
-    def __init__(self, fname, fpath=None, distance=1):
+    def __init__(self, fname, fpath=None, ETmodel="PM", distance=1):
         WeatherDataProvider.__init__(self)
+
+        self.ETmodel = ETmodel
 
         # Construct search path
         search_path = self._construct_search_path(fname, fpath)
@@ -124,6 +129,7 @@ class CABOWeatherDataProvider(WeatherDataProvider):
 
             # Write data to binary cache file
             self._write_cache_file(search_path)
+
             # Delete array for tmp storage
             delattr(self, "tmp_data")
 
@@ -260,20 +266,10 @@ class CABOWeatherDataProvider(WeatherDataProvider):
             # put interpolated values back into tmp_data
             self.tmp_data[i, x.astype(np.int)] = y_int
     
-    def _build_WeatherDataContainer(self):
-        """Builds a WeatherDataContainer and sets the location parameters.
-        
-        All records will deepcopy this model and add the weather variables on
-        it.
-        """
-        
-        wdc = WeatherDataContainer(LAT=self.latitude, LON=self.longitude,
-                                   ELEV=self.elevation)
-        return wdc
-        
+
     def _make_WeatherDataContainers(self):
-        """Converts the data in self.tmp_data into WeatherDataContainers which are stored in the class dictionary
-        keyed on the date.
+        """Converts the data in self.tmp_data into WeatherDataContainers which are stored in
+        the class dictionary keyed on the date.
         
         Records that are incomplete (contain np.NaN values) are skipped.
         Moreover, if the radiation measurements are in sunshine duration, than
@@ -282,42 +278,42 @@ class CABOWeatherDataProvider(WeatherDataProvider):
         """
         
         # Generate prototype weather data container
-        wdc_proto = self._build_WeatherDataContainer()
+        #wdc_proto = self._build_WeatherDataContainer()
         
         for i in range(self.potential_records):
-            rec = self.tmp_data[:,i]
+            rec = self.tmp_data[:, i]
             if True in np.isnan(rec):
                 # Incomplete record: skip
                 continue
 
             # Derive date from position in array
             thisdate = self.first_date + dt.timedelta(days=i)
-            # Copy the proto WeatherDataContainer and the date
-            wdc = copy.deepcopy(wdc_proto)
-            wdc.DAY = thisdate
+            t = {"DAY": thisdate, "LAT": self.latitude, 
+                 "LON": self.longitude, "ELEV": self.elevation}
             
             for obs, (name, cf, unit) in zip(rec, self.variables):
                 if name == "IRRAD" and self.has_sunshine is True:
                     obs = angstrom(thisdate, self.latitude, obs, self.angstA, self.angstB)
                     # angstrom routine returns in J/m2/day, no conversion factor needed
-                    wdc.add_variable(name, float(obs), unit)
+                    t[name] = float(obs)
                 else:
-                    wdc.add_variable(name, float(obs)*cf, unit)
+                    t[name] = float(obs)*cf
             
             # Reference evapotranspiration in mm/day
             try:
-                (E0,ES0,ET0) = penman(thisdate, wdc.LAT, wdc.ELEV, self.angstA,
-                                      self.angstB, wdc.TMIN, wdc.TMAX, wdc.IRRAD,
-                                      wdc.VAP, wdc.WIND)
-            except ValueError, exc:
-                msg = (("Failed to calculate reference ET values on %s" % thisdate) +
-                        "With input values:\n %s" % str(wdc))
+                E0, ES0, ET0 = reference_ET(thisdate, t["LAT"], t["ELEV"], t["TMIN"], t["TMAX"], t["IRRAD"],
+                                            t["VAP"], t["WIND"], self.angstA, self.angstB, self.ETmodel)
+            except ValueError as e:
+                msg = (("Failed to calculate reference ET values on %s. " % thisdate) +
+                       ("With input values:\n %s.\n" % str(t)) +
+                       ("Due to error: %s" % e))
                 raise PCSEError(msg)
-                
-            # Add to wdc and convert to cm/day
-            wdc.add_variable("E0", E0/10.,"cm/day")
-            wdc.add_variable("ES0",ES0/10.,"cm/day")
-            wdc.add_variable("ET0",ET0/10.,"cm/day")
+
+            # update record with ET values value convert to cm/day
+            t.update({"E0": E0/10., "ES0": ES0/10., "ET0": ET0/10.})
+
+            # Build weather data container from dict 't'
+            wdc = WeatherDataContainer(**t)
 
             # add wdc to dictionary for thisdate
             self._store_WeatherDataContainer(wdc, thisdate)

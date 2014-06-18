@@ -39,13 +39,16 @@ The tables specifying state/rate variables have the following columns:
     
 Finally, all public methods of all object are described as well.
 
-Top level classes
-=================
-    
-.. autoclass:: pcse.PyWofost
+Engines and models
+==================
+
+ .. autoclass:: pcse.engine.Engine
     :members:
 
-.. autoclass:: pcse.soilcropsimulation.SoilCropSimulation
+.. autoclass:: pcse.models.Wofost71_PP
+    :members:
+
+.. autoclass:: pcse.models.Wofost71_WLP_FD
     :members:
 
 .. _Agromanagement:
@@ -76,13 +79,13 @@ The PyWOFOST distribution provides several waterbalance modules:
        water tables.)
     4. A model for simulation the build-up and melting of the snow cover.
        
-.. autoclass:: pcse.classic_waterbalance.WaterbalancePP
+.. autoclass:: pcse.soil.WaterbalancePP
     :members:
 
-.. autoclass:: pcse.classic_waterbalance.WaterbalanceFD
+.. autoclass:: pcse.soil.WaterbalanceFD
     :members:
 
-.. autoclass:: pcse.snowmaus.SnowMaus
+.. autoclass:: pcse.soil.snowmaus.SnowMaus
     :members:
 
 Crop simulation processes

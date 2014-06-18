@@ -7,7 +7,7 @@ from datetime import date, timedelta
 import numpy as np
 
 from ..base_classes import WeatherDataProvider, WeatherDataContainer
-from ..util import wind10to2, ea_from_tdew, penman, check_angstromAB
+from ..util import wind10to2, ea_from_tdew, reference_ET, check_angstromAB
 from ..exceptions import PCSEError
 from ..settings import settings
 
@@ -23,7 +23,10 @@ class NASAPowerWeatherDataProvider(WeatherDataProvider):
 
     :param latitude: latitude to request weather data for
     :param longitude: longitude to request weather data for
-    :param force_update: Force to request fresh data from POWER website
+    :keyword force_update: Set to True to force to request fresh data
+        from POWER website.
+    :keyword ETmodel: "PM"|"P" for selecting penman-monteith or Penman
+        method for reference evapotranspiration. Defaults to "PM".
 
     The NASA POWER database is a global database of daily weather data
     specifically designed for agrometeorological applications. The spatial
@@ -76,7 +79,7 @@ class NASAPowerWeatherDataProvider(WeatherDataProvider):
     angstA = 0.25
     angstB = 0.5
 
-    def __init__(self, latitude=None, longitude=None, force_update=False):
+    def __init__(self, latitude, longitude, force_update=False, ETmodel="PM"):
 
         WeatherDataProvider.__init__(self)
 
@@ -89,6 +92,7 @@ class NASAPowerWeatherDataProvider(WeatherDataProvider):
 
         self.latitude = float(latitude)
         self.longitude = float(longitude)
+        self.ETmodel = ETmodel
         msg = "Retrieving weather data from NASA Power for lat/lon: (%f, %f)."
         self.logger.info(msg % (self.latitude, self.longitude))
 
@@ -123,8 +127,8 @@ class NASAPowerWeatherDataProvider(WeatherDataProvider):
                 self.logger.debug(msg)
                 self._get_and_process_NASAPower(self.latitude, self.longitude)
             except Exception, e:
-                msg = ("Reloading data from NASA failed, reverting to (outdated) "+\
-                      "cache file")
+                msg = ("Reloading data from NASA failed, reverting to (outdated) " +
+                       "cache file")
                 self.logger.debug(msg)
                 status = self._load_cache_file()
                 if status is not True:
@@ -282,27 +286,27 @@ class NASAPowerWeatherDataProvider(WeatherDataProvider):
         """
 
         for rec in recs:
-            wdc = WeatherDataContainer(LAT=self.latitude, LON=self.longitude,
-                                       ELEV=self.elevation)
-            wdc.DAY = rec["day"]
+            t = {"LAT": self.latitude, "LON": self.longitude, "ELEV": self.elevation, "DAY": rec["day"]}
+
             for pcse_name, power_name, conv, unit in self.pcse_variables:
                 value = conv(rec[power_name])
-                wdc.add_variable(pcse_name, value, unit)
+                t[pcse_name] = value
 
             # Reference evapotranspiration in mm/day
             try:
-                (E0, ES0, ET0) = penman(wdc.DAY, wdc.LAT, wdc.ELEV, self.angstA,
-                                        self.angstB, wdc.TMIN, wdc.TMAX, wdc.IRRAD,
-                                        wdc.VAP, wdc.WIND)
-            except ValueError, exc:
-                msg = (("Failed to calculate reference ET values on %s" % wdc.DAY) +
-                       "With input values:\n %s" % str(wdc))
+                E0, ES0, ET0 = reference_ET(t["DAY"], t["LAT"], t["ELEV"], t["TMIN"], t["TMAX"], t["IRRAD"],
+                                            t["VAP"], t["WIND"], self.angstA, self.angstB, self.ETmodel)
+            except ValueError as e:
+                msg = (("Failed to calculate reference ET values on %s. " % t["DAY"]) +
+                       ("With input values:\n %s.\n" % str(t)) +
+                       ("Due to error: %s" % e))
                 raise PCSEError(msg)
 
-            # Add to wdc and convert to cm/day
-            wdc.add_variable("E0", E0 / 10., "cm/day")
-            wdc.add_variable("ES0", ES0 / 10., "cm/day")
-            wdc.add_variable("ET0", ET0 / 10., "cm/day")
+            # update record with ET values value convert to cm/day
+            t.update({"E0": E0/10., "ES0": ES0/10., "ET0": ET0/10.})
+
+            # Build weather data container from dict 't'
+            wdc = WeatherDataContainer(**t)
 
             # add wdc to dictionary for thisdate
             self._store_WeatherDataContainer(wdc, wdc.DAY)
